@@ -304,6 +304,60 @@
             </div>
           </div>
 
+          <!-- Codex Quota Overdraft Settings -->
+          <div class="card">
+            <div
+              class="border-b border-gray-100 px-6 py-4 dark:border-dark-700"
+            >
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t("admin.settings.codexQuotaOverdraft.title") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.codexQuotaOverdraft.description") }}
+              </p>
+            </div>
+            <div class="space-y-5 p-6">
+              <div
+                v-if="codexQuotaOverdraftLoading"
+                class="flex items-center gap-2 text-gray-500"
+              >
+                <div
+                  class="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600"
+                ></div>
+                {{ t("common.loading") }}
+              </div>
+              <template v-else>
+                <div class="flex items-center justify-between">
+                  <div>
+                    <label class="font-medium text-gray-900 dark:text-white">
+                      {{ t("admin.settings.codexQuotaOverdraft.enabled") }}
+                    </label>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.codexQuotaOverdraft.enabledHint") }}
+                    </p>
+                  </div>
+                  <Toggle v-model="codexQuotaOverdraftForm.enabled" />
+                </div>
+                <div
+                  class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700"
+                >
+                  <button
+                    type="button"
+                    @click="saveCodexQuotaOverdraftSettings"
+                    :disabled="codexQuotaOverdraftSaving"
+                    class="btn btn-primary btn-sm"
+                  >
+                    {{
+                      codexQuotaOverdraftSaving
+                        ? t("common.saving")
+                        : t("common.save")
+                    }}
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+
           <!-- Rate Limit Cooldown (429) Settings -->
           <div class="card">
             <div
@@ -8955,6 +9009,13 @@ const overloadCooldownForm = reactive({
   cooldown_minutes: 10,
 });
 
+// Codex quota overdraft 状态
+const codexQuotaOverdraftLoading = ref(true);
+const codexQuotaOverdraftSaving = ref(false);
+const codexQuotaOverdraftForm = reactive({
+  enabled: false,
+});
+
 // Rate Limit Cooldown (429) 状态
 const rateLimit429CooldownLoading = ref(true);
 const rateLimit429CooldownSaving = ref(false);
@@ -11808,6 +11869,38 @@ async function saveOverloadCooldownSettings() {
   }
 }
 
+async function loadCodexQuotaOverdraftSettings() {
+  codexQuotaOverdraftLoading.value = true;
+  try {
+    const settings = await adminAPI.settings.getCodexQuotaOverdraftSettings();
+    Object.assign(codexQuotaOverdraftForm, settings);
+  } catch (_error: unknown) {
+    // Silent fail - the backend default is disabled.
+  } finally {
+    codexQuotaOverdraftLoading.value = false;
+  }
+}
+
+async function saveCodexQuotaOverdraftSettings() {
+  codexQuotaOverdraftSaving.value = true;
+  try {
+    const updated = await adminAPI.settings.updateCodexQuotaOverdraftSettings({
+      enabled: codexQuotaOverdraftForm.enabled,
+    });
+    Object.assign(codexQuotaOverdraftForm, updated);
+    appStore.showSuccess(t("admin.settings.codexQuotaOverdraft.saved"));
+  } catch (error: unknown) {
+    appStore.showError(
+      extractApiErrorMessage(
+        error,
+        t("admin.settings.codexQuotaOverdraft.saveFailed"),
+      ),
+    );
+  } finally {
+    codexQuotaOverdraftSaving.value = false;
+  }
+}
+
 // Panel API Rate Limit 方法
 async function loadPanelRateLimitSettings() {
   panelRateLimitLoading.value = true;
@@ -12520,6 +12613,7 @@ onMounted(() => {
   loadUpstreamBillingProbeSettings();
   loadOllamaCloudUsageSettings();
   loadOverloadCooldownSettings();
+  loadCodexQuotaOverdraftSettings();
   loadRateLimit429CooldownSettings();
   loadPanelRateLimitSettings();
   loadStreamTimeoutSettings();

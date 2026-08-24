@@ -12,10 +12,12 @@
 
 ## 当前开关
 
-- 配置键：`gateway.codex_quota_overdraft_enabled`。
-- 环境变量：`GATEWAY_CODEX_QUOTA_OVERDRAFT_ENABLED`。
-- 默认值：`false`。
-- 当前阶段只建立开关，不接入透支请求注入、账号暂停或探测逻辑。
+- 管理入口：Sub2API 管理 Web 的 Gateway 设置页。
+- API：`GET/PUT /api/v1/admin/settings/codex-quota-overdraft`。
+- 存储：Sub2API `settings` 表中的 `codex_quota_overdraft_settings`。
+- 默认值：`enabled=false`。
+- YAML/环境变量不是该开关的 authority；修改后由运行时读取数据库设置，无需滚动。
+- 当前阶段只建立管理开关，不接入透支请求注入、账号暂停或探测逻辑。
 
 ## 同步原则
 

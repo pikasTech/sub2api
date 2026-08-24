@@ -565,6 +565,11 @@ type RateLimit429CooldownSettings struct {
 	CooldownSeconds int `json:"cooldown_seconds"`
 }
 
+// CodexQuotaOverdraftSettings controls the optional Codex OAuth quota overdraft flow.
+type CodexQuotaOverdraftSettings struct {
+	Enabled bool `json:"enabled"`
+}
+
 // OpenAIAPIKeyHealthBreakerSettings controls cross-instance failure counting for OpenAI pool API keys.
 type OpenAIAPIKeyHealthBreakerSettings struct {
 	Enabled          bool `json:"enabled"`
@@ -596,6 +601,11 @@ func DefaultRateLimit429CooldownSettings() *RateLimit429CooldownSettings {
 		Enabled:         true,
 		CooldownSeconds: 5,
 	}
+}
+
+// DefaultCodexQuotaOverdraftSettings returns the safe opt-in default.
+func DefaultCodexQuotaOverdraftSettings() *CodexQuotaOverdraftSettings {
+	return &CodexQuotaOverdraftSettings{Enabled: false}
 }
 
 // DefaultBetaPolicySettings 返回默认的 Beta 策略配置

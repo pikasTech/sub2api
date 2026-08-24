@@ -764,6 +764,45 @@ func (s *SettingService) SetRateLimit429CooldownSettings(ctx context.Context, se
 	return s.settingRepo.Set(ctx, SettingKeyRateLimit429CooldownSettings, string(data))
 }
 
+// GetCodexQuotaOverdraftSettings returns the DB-backed Codex quota overdraft switch.
+func (s *SettingService) GetCodexQuotaOverdraftSettings(ctx context.Context) (*CodexQuotaOverdraftSettings, error) {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyCodexQuotaOverdraftSettings)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return DefaultCodexQuotaOverdraftSettings(), nil
+		}
+		return nil, fmt.Errorf("get codex quota overdraft settings: %w", err)
+	}
+	if value == "" {
+		return DefaultCodexQuotaOverdraftSettings(), nil
+	}
+
+	var settings CodexQuotaOverdraftSettings
+	if err := json.Unmarshal([]byte(value), &settings); err != nil {
+		return DefaultCodexQuotaOverdraftSettings(), nil
+	}
+	return &settings, nil
+}
+
+// IsCodexQuotaOverdraftEnabled is the runtime read path for the DB-backed switch.
+func (s *SettingService) IsCodexQuotaOverdraftEnabled(ctx context.Context) bool {
+	settings, err := s.GetCodexQuotaOverdraftSettings(ctx)
+	return err == nil && settings.Enabled
+}
+
+// SetCodexQuotaOverdraftSettings persists the Codex quota overdraft switch.
+func (s *SettingService) SetCodexQuotaOverdraftSettings(ctx context.Context, settings *CodexQuotaOverdraftSettings) error {
+	if settings == nil {
+		return fmt.Errorf("settings cannot be nil")
+	}
+
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("marshal codex quota overdraft settings: %w", err)
+	}
+	return s.settingRepo.Set(ctx, SettingKeyCodexQuotaOverdraftSettings, string(data))
+}
+
 // GetStreamTimeoutSettings 获取流超时处理配置
 func (s *SettingService) GetStreamTimeoutSettings(ctx context.Context) (*StreamTimeoutSettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyStreamTimeoutSettings)

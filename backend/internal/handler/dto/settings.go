@@ -344,6 +344,11 @@ type SystemSettings struct {
 	AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
 }
 
+// CodexQuotaOverdraftSettings represents the admin-controlled Codex overdraft switch.
+type CodexQuotaOverdraftSettings struct {
+	Enabled bool `json:"enabled"`
+}
+
 type DefaultSubscriptionSetting struct {
 	GroupID      int64 `json:"group_id"`
 	ValidityDays int   `json:"validity_days"`

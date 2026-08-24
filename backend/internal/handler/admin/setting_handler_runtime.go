@@ -154,6 +154,47 @@ func (h *SettingHandler) UpdateRateLimit429CooldownSettings(c *gin.Context) {
 	})
 }
 
+// GetCodexQuotaOverdraftSettings 获取 Codex OAuth 额度透支开关
+// GET /api/v1/admin/settings/codex-quota-overdraft
+func (h *SettingHandler) GetCodexQuotaOverdraftSettings(c *gin.Context) {
+	settings, err := h.settingService.GetCodexQuotaOverdraftSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, dto.CodexQuotaOverdraftSettings{Enabled: settings.Enabled})
+}
+
+// UpdateCodexQuotaOverdraftSettingsRequest 更新 Codex OAuth 额度透支开关请求
+type UpdateCodexQuotaOverdraftSettingsRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// UpdateCodexQuotaOverdraftSettings 更新 Codex OAuth 额度透支开关
+// PUT /api/v1/admin/settings/codex-quota-overdraft
+func (h *SettingHandler) UpdateCodexQuotaOverdraftSettings(c *gin.Context) {
+	var req UpdateCodexQuotaOverdraftSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	if err := h.settingService.SetCodexQuotaOverdraftSettings(
+		c.Request.Context(),
+		&service.CodexQuotaOverdraftSettings{Enabled: req.Enabled},
+	); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	updated, err := h.settingService.GetCodexQuotaOverdraftSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, dto.CodexQuotaOverdraftSettings{Enabled: updated.Enabled})
+}
+
 // GetPanelRateLimitSettings 获取面板 API 限流配置
 // GET /api/v1/admin/settings/panel-rate-limit
 func (h *SettingHandler) GetPanelRateLimitSettings(c *gin.Context) {

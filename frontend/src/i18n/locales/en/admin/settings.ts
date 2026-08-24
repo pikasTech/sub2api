@@ -994,6 +994,14 @@ export default {
         saved: 'Overload cooldown settings saved',
         saveFailed: 'Failed to save overload cooldown settings'
       },
+      codexQuotaOverdraft: {
+        title: 'Codex OAuth Quota Overdraft',
+        description: 'Control the optional Codex OAuth quota overdraft flow at runtime.',
+        enabled: 'Enable Codex quota overdraft',
+        enabledHint: 'Opt-in switch. It is stored in Sub2API settings and takes effect without a rollout.',
+        saved: 'Codex quota overdraft setting saved',
+        saveFailed: 'Failed to save Codex quota overdraft setting'
+      },
       rateLimit429Cooldown: {
         title: '429 Default Cooldown',
         description: 'Configure the default account cooldown when upstream returns 429 without an explicit reset time',

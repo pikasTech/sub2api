@@ -1310,6 +1310,29 @@ export async function updateRateLimit429CooldownSettings(
   return data;
 }
 
+// ==================== Codex Quota Overdraft Settings ====================
+
+export interface CodexQuotaOverdraftSettings {
+  enabled: boolean;
+}
+
+export async function getCodexQuotaOverdraftSettings(): Promise<CodexQuotaOverdraftSettings> {
+  const { data } = await apiClient.get<CodexQuotaOverdraftSettings>(
+    "/admin/settings/codex-quota-overdraft",
+  );
+  return data;
+}
+
+export async function updateCodexQuotaOverdraftSettings(
+  settings: CodexQuotaOverdraftSettings,
+): Promise<CodexQuotaOverdraftSettings> {
+  const { data } = await apiClient.put<CodexQuotaOverdraftSettings>(
+    "/admin/settings/codex-quota-overdraft",
+    settings,
+  );
+  return data;
+}
+
 // ==================== Panel Rate Limit Settings ====================
 
 /**

@@ -988,6 +988,14 @@ export default {
         saved: '过载冷却设置保存成功',
         saveFailed: '保存过载冷却设置失败'
       },
+      codexQuotaOverdraft: {
+        title: 'Codex OAuth 额度透支',
+        description: '运行时控制可选的 Codex OAuth 额度透支功能。',
+        enabled: '启用 Codex 额度透支',
+        enabledHint: '这是显式 opt-in 开关，保存在 Sub2API 设置中，修改后无需滚动即可生效。',
+        saved: 'Codex 额度透支设置保存成功',
+        saveFailed: '保存 Codex 额度透支设置失败'
+      },
       rateLimit429Cooldown: {
         title: '429 默认回避',
         description: '配置上游返回 429 且没有明确重置时间时的默认账号回避策略',
