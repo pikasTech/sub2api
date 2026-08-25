@@ -207,6 +207,21 @@ node scripts/sub2api-admin.js api POST /admin/accounts/bulk-update \
   --json '{"account_ids":[40],"concurrency":10}'
 ```
 
+## 容器化前端测试
+
+host 的 Corepack 可能选择不兼容的 pnpm 版本。使用 fork 内置 CLI 在 Node 20 容器中执行：
+
+```bash
+node scripts/sub2api-admin.js dev test-frontend start --repo /root/sub2api --suite typecheck
+node scripts/sub2api-admin.js dev test-frontend status <job-id> --repo /root/sub2api
+node scripts/sub2api-admin.js dev test-frontend logs <job-id> --repo /root/sub2api --tail 200
+node scripts/sub2api-admin.js dev test-frontend wait <job-id> --repo /root/sub2api --timeout 120s
+node scripts/sub2api-admin.js dev test-frontend clean <job-id> --repo /root/sub2api
+```
+
+`start` 使用 `node:20-bookworm`、pnpm `9.15.5`、源码挂载 `/workspace` 和独立的
+`node_modules` volume。`--suite` 可选 `typecheck`、`build`、`lint`、`critical`、`all`。
+
 ## Confirmed Admin Endpoints
 
 - `GET /api/v1/admin/accounts`

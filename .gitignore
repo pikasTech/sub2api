@@ -1,6 +1,8 @@
 # 本地杂项文档、测试数据和外部项目副本
 /docs-local/
 .codex
+.state/
+.pnpm-store/
 
 # ===================
 # Go 后端
@@ -122,6 +124,9 @@ tests
 CLAUDE.md
 .claude
 scripts
+!skills/sub2api-admin/scripts/
+!skills/sub2api-admin/scripts/src/
+!skills/sub2api-admin/scripts/src/**
 !backend/scripts/
 !backend/scripts/resolve-version.sh
 .code-review-state

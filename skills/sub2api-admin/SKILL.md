@@ -40,6 +40,24 @@ node scripts/sub2api-admin.js error-rules list
 node scripts/sub2api-admin.js tls-profiles list
 ```
 
+## 容器化前端验证
+
+CLI 可在 Node 20 Docker 容器中挂载当前 fork，固定 pnpm 9，使用独立容器卷安装依赖，避免受 host 的 Corepack/pnpm 版本影响：
+
+```bash
+node scripts/sub2api-admin.js dev test-frontend start --repo /root/sub2api --suite typecheck
+node scripts/sub2api-admin.js dev test-frontend status <job-id> --repo /root/sub2api
+node scripts/sub2api-admin.js dev test-frontend logs <job-id> --repo /root/sub2api --tail 200
+node scripts/sub2api-admin.js dev test-frontend wait <job-id> --repo /root/sub2api --timeout 120s
+node scripts/sub2api-admin.js dev test-frontend clean <job-id> --repo /root/sub2api
+```
+
+- `--suite` 支持 `typecheck`、`build`、`lint`、`critical` 和 `all`，默认是 `typecheck`。
+- `start` 为异步启动，立即返回 job ID；通过 `status`、`logs` 和 `wait` 查询结果。
+- 默认使用 `node:20-bookworm` 与 pnpm `9.15.5`；可用 `--image` 和 `--pnpm-version` 覆盖。
+- 源码目录挂载到容器 `/workspace`，依赖写入独立 Docker volume，不写入 host 的 `node_modules`。
+- CLI 状态保存在 fork 的 `.state/sub2api-admin/container-tests/`，该目录不进入 Git。
+
 ## Safety Notes
 
 - Authentication uses `x-api-key` from `SUB2API_ADMIN_API_KEY` first, then falls back to `Authorization: Bearer <jwt>` from `SUB2API_JWT`.

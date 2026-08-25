@@ -2,6 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const containerTest = require("./src/container-test");
 
 const BASE_URL = (process.env.SUB2API_BASE_URL || "").replace(/\/$/, "");
 const ADMIN_API_KEY = process.env.SUB2API_ADMIN_API_KEY || "";
@@ -58,6 +59,9 @@ function usage() {
   sub2api-admin.js redeem-codes stats
   sub2api-admin.js error-rules list|get|create|update|delete|toggle ...
   sub2api-admin.js tls-profiles list|get|create|update|delete ...
+  sub2api-admin.js dev test-frontend start [--repo /root/sub2api] [--suite typecheck|build|lint|critical|all]
+  sub2api-admin.js dev test-frontend status|logs|wait|clean <job-id> [--timeout 120s] [--tail 200]
+  sub2api-admin.js dev test-frontend list [--repo /root/sub2api]
   sub2api-admin.js api <GET|POST|PUT|DELETE> <admin-path> [--json '{...}' | --file payload.json]
 `);
 }
@@ -715,6 +719,13 @@ async function commandApi(args) {
   printJson(await adminRequest(method.toUpperCase(), pathname, body));
 }
 
+async function commandDev(args) {
+  if (args.positional[1] !== "test-frontend") {
+    throw new Error(`unknown dev subcommand: ${args.positional[1] || "(missing)"}`);
+  }
+  printJson(await containerTest.run(args));
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const root = args.positional[0];
@@ -748,6 +759,10 @@ async function main() {
   }
   if (root === "api") {
     await commandApi(args);
+    return;
+  }
+  if (root === "dev") {
+    await commandDev(args);
     return;
   }
   throw new Error(`unknown command: ${root}`);

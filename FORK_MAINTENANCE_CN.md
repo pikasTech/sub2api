@@ -19,6 +19,13 @@
 - YAML/环境变量不是该开关的 authority；修改后由运行时读取数据库设置，无需滚动。
 - 当前阶段只建立管理开关，不接入透支请求注入、账号暂停或探测逻辑。
 
+## Fork 验证 CLI
+
+- 前端验证统一通过 `skills/sub2api-admin/scripts/sub2api-admin.js dev test-frontend` 执行。
+- CLI 在 Node 20 Docker 容器中挂载 fork 源码，并固定使用 pnpm 9.15.5。
+- `node_modules` 使用独立 Docker volume，避免 host 的 Corepack/pnpm 版本和依赖目录污染验证结果。
+- 任务采用异步 job：通过 `start` 启动，使用 `status`、`logs`、`wait` 查询，完成后用 `clean` 回收容器和 volume。
+
 ## 同步原则
 
 - 官方主线更新先进入 `upstream/main`，再在 feature 分支上 rebase。
