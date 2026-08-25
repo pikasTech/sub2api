@@ -740,6 +740,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	} else if compatibilityChanged {
 		firstClientMessage = normalized
 	}
+	firstClientMessage = s.applyCodexQuotaOverdraft(ctx, account, firstClientMessage)
 	if account.IsOpenAIOAuthLike() {
 		aliasedBody, reverse, aliased, aliasErr := aliasOpenAIOAuthReservedToolNamesBody(firstClientMessage)
 		if aliasErr != nil {
@@ -990,6 +991,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				} else if compatibilityChanged {
 					payload = normalized
 				}
+				payload = s.applyCodexQuotaOverdraft(ctx, account, payload)
 			}
 			if account.IsOpenAIOAuthLike() && (isResponseCreate || eventType == "session.update") {
 				aliasedBody, reverse, aliased, aliasErr := aliasOpenAIOAuthReservedToolNamesBody(payload)

@@ -10,14 +10,21 @@
 - `feature/codex-quota-overdraft`：透支功能开发分支。
 - `release/*-overdraft.*`：经过验证的定制发布分支。
 
-## 当前开关
+## 当前开关与实际能力
 
 - 管理入口：Sub2API 管理 Web 的 Gateway 设置页。
 - API：`GET/PUT /api/v1/admin/settings/codex-quota-overdraft`。
 - 存储：Sub2API `settings` 表中的 `codex_quota_overdraft_settings`。
 - 默认值：`enabled=false`。
 - YAML/环境变量不是该开关的 authority；修改后由运行时读取数据库设置，无需滚动。
-- 当前阶段只建立管理开关，不接入透支请求注入、账号暂停或探测逻辑。
+- 开关开启后，Sub2API 会对符合条件的 Codex Responses 请求注入一组已完成的
+  `custom_tool_call`/`custom_tool_call_output`，以触发上游额度透支计量路径。
+- 注入覆盖普通 HTTP、WSv2 透传、WS HTTP Bridge 和 WS ctx-pool 的
+  `response.create`；只处理 OpenAI OAuth-like 账号，API-key 账号不会注入。
+- 请求必须包含顶层 `input` 数组且最后一项是用户 `message`；不满足条件时保持原请求，
+  注入失败也保持原请求，单请求体上限为 `32 MiB`。
+- 参考仓库中独立的账号管理层用量基线、透支价格和自动停用探测没有移植到 Sub2API；
+  当前提交只改变上游请求体，不改变既有账号调度和配额状态机。
 
 ## Fork 验证 CLI
 
