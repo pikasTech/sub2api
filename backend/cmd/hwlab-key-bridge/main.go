@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,7 @@ type route struct {
 }
 type settings struct {
 	DatabaseSourceRef string  `yaml:"databaseSourceRef"`
+	DatabaseHost      string  `yaml:"databaseHost"`
 	GatewayURL        string  `yaml:"gatewayUrl"`
 	Routes            []route `yaml:"routes"`
 }
@@ -87,6 +89,9 @@ func run(path string, in io.Reader, out io.Writer) error {
 	env, err := readEnv(cfg.DatabaseSourceRef)
 	if err != nil {
 		return err
+	}
+	if cfg.DatabaseHost != "" {
+		env["DATABASE_HOST"] = cfg.DatabaseHost
 	}
 	port, err := strconv.Atoi(env["DATABASE_PORT"])
 	if err != nil {
@@ -187,6 +192,22 @@ func run(path string, in io.Reader, out io.Writer) error {
 	return json.NewEncoder(out).Encode(map[string]any{"subjectId": request.SubjectID, "gatewayUrl": cfg.GatewayURL, "routes": cfg.Routes})
 }
 func readEnv(path string) (map[string]string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		values := map[string]string{}
+		for _, key := range []string{"DATABASE_HOST", "DATABASE_PORT", "DATABASE_USER", "DATABASE_PASSWORD", "DATABASE_DBNAME", "DATABASE_SSLMODE"} {
+			raw, err := os.ReadFile(filepath.Join(path, key))
+			if err != nil {
+				return nil, err
+			}
+			values[key] = strings.TrimSpace(string(raw))
+		}
+		return values, nil
+	}
+
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
