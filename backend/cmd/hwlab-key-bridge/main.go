@@ -33,6 +33,7 @@ type route struct {
 	Label          string  `yaml:"label" json:"label"`
 	GroupID        int64   `yaml:"groupId" json:"groupId"`
 	RateMultiplier float64 `json:"rateMultiplier"`
+	KeyName        string  `json:"keyName,omitempty"`
 	KeyID          int64   `json:"keyId,omitempty"`
 	Key            string  `json:"apiKey,omitempty"`
 }
@@ -151,10 +152,11 @@ func run(path string, in io.Reader, out io.Writer) error {
 		if !request.Ensure {
 			continue
 		}
-		name := "hwlab-gpt-" + r.ID
+		legacyName := "hwlab-gpt-" + r.ID
+		name := "(HWLAB自动创建)" + legacyName
 		// Include soft-deleted keys: revocation must not cause silent reissuance.
 		operation = "managed-key-read"
-		matches, e := client.APIKey.Query().Where(apikey.UserIDEQ(userID), apikey.NameEQ(name)).Select(apikey.FieldID, apikey.FieldKey, apikey.FieldStatus, apikey.FieldDeletedAt, apikey.FieldGroupID).All(ctx)
+		matches, e := client.APIKey.Query().Where(apikey.UserIDEQ(userID), apikey.NameIn(name, legacyName)).Select(apikey.FieldName, apikey.FieldID, apikey.FieldKey, apikey.FieldStatus, apikey.FieldDeletedAt, apikey.FieldGroupID).All(ctx)
 		if e != nil {
 			return e
 		}
@@ -166,14 +168,20 @@ func run(path string, in io.Reader, out io.Writer) error {
 			if k.DeletedAt != nil || k.Status != service.StatusActive || k.GroupID == nil || *k.GroupID != g.ID {
 				return errors.New("managed key revoked")
 			}
-			r.KeyID, r.Key = k.ID, k.Key
+			if k.Name != name {
+				operation = "managed-key-rename"
+				if _, e := svc.Update(ctx, k.ID, userID, service.UpdateAPIKeyRequest{Name: &name}); e != nil {
+					return e
+				}
+			}
+			r.KeyID, r.Key, r.KeyName = k.ID, k.Key, name
 		} else {
 			operation = "managed-key-create"
 			k, e := svc.Create(ctx, userID, service.CreateAPIKeyRequest{Name: name, GroupID: &g.ID})
 			if e != nil {
 				return e
 			}
-			r.KeyID, r.Key = k.ID, k.Key
+			r.KeyID, r.Key, r.KeyName = k.ID, k.Key, name
 		}
 	}
 	return json.NewEncoder(out).Encode(map[string]any{"subjectId": request.SubjectID, "gatewayUrl": cfg.GatewayURL, "routes": cfg.Routes})
