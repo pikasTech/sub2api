@@ -103,7 +103,7 @@ func run(path string, in io.Reader, out io.Writer) error {
 	client := ent.NewClient(ent.Driver(entsql.OpenDB(dialect.Postgres, db)))
 	users := repository.NewUserRepository(client, db)
 	groups := &bridgeGroups{GroupRepository: repository.NewGroupRepository(client, db), client: client, db: db}
-	keys := repository.NewAPIKeyRepository(client, db)
+	keys := &bridgeKeys{APIKeyRepository: repository.NewAPIKeyRepository(client, db), client: client}
 	rates := repository.NewUserGroupRateRepository(db)
 	svc := service.NewAPIKeyService(keys, users, groups, repository.NewUserSubscriptionRepository(client), rates, nil, &config.Config{})
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
