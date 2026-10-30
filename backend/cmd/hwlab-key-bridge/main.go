@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -45,8 +46,9 @@ type settings struct {
 	Routes            []route `yaml:"routes"`
 }
 type input struct {
-	SubjectID string `json:"subjectId"`
-	Ensure    bool   `json:"ensure"`
+	SubjectID string  `json:"subjectId"`
+	Ensure    bool    `json:"ensure"`
+	Routes    []route `json:"routes"`
 }
 
 var operation = "configuration"
@@ -72,14 +74,20 @@ func run(path string, in io.Reader, out io.Writer) error {
 	if err = yaml.Unmarshal(raw, &cfg); err != nil {
 		return err
 	}
-	if cfg.DatabaseSourceRef == "" || cfg.GatewayURL == "" || len(cfg.Routes) != 2 {
+	if cfg.DatabaseSourceRef == "" || cfg.GatewayURL == "" {
 		return errors.New("invalid bridge configuration")
-	}
-	if cfg.Routes[0].ID != "mixed" || cfg.Routes[1].ID != "full" || cfg.Routes[0].GroupID == cfg.Routes[1].GroupID {
-		return errors.New("distinct mixed and full routes required")
 	}
 	var request input
 	if err = json.NewDecoder(io.LimitReader(in, 65536)).Decode(&request); err != nil {
+		return err
+	}
+	// The caller injects the authoritative route table. The YAML list is only a
+	// fallback for direct invocation, so adding a channel needs no redeploy.
+	routes := request.Routes
+	if len(routes) == 0 {
+		routes = cfg.Routes
+	}
+	if err = validateRoutes(routes); err != nil {
 		return err
 	}
 	userID, err := strconv.ParseInt(request.SubjectID, 10, 64)
@@ -139,14 +147,16 @@ func run(path string, in io.Reader, out io.Writer) error {
 		}
 		defer conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock(hashtext('sub2api-hwlab-keys'),$1)", userID)
 	}
-	for i := range cfg.Routes {
+	for i := range routes {
 		operation = "group-read"
-		r := &cfg.Routes[i]
+		r := &routes[i]
 		g, e := groups.GetByID(ctx, r.GroupID)
 		if e != nil {
 			return e
 		}
-		if g.Platform != "openai" || g.Status != service.StatusActive {
+		// Composite groups route the requested model to a concrete provider
+		// (for example DeepSeek) without a second bridge code path.
+		if !routePlatformAllowed(g.Platform) || g.Status != service.StatusActive {
 			return errors.New("route unavailable")
 		}
 		r.RateMultiplier = g.RateMultiplier
@@ -157,11 +167,15 @@ func run(path string, in io.Reader, out io.Writer) error {
 		if !request.Ensure {
 			continue
 		}
-		legacyName := "hwlab-gpt-" + r.ID
+		// The legacy prefix carried a provider hint. Names are now provider
+		// neutral; the rename branch below migrates existing keys in place, so
+		// old names must stay matched or a second key would be issued.
+		legacyName := "hwlab-" + r.ID
 		name := "(HWLAB自动创建)" + legacyName
+		previousName := "(HWLAB自动创建)hwlab-gpt-" + r.ID
 		// Include soft-deleted keys: revocation must not cause silent reissuance.
 		operation = "managed-key-read"
-		matches, e := client.APIKey.Query().Where(apikey.UserIDEQ(userID), apikey.NameIn(name, legacyName)).Select(apikey.FieldName, apikey.FieldID, apikey.FieldKey, apikey.FieldStatus, apikey.FieldDeletedAt, apikey.FieldGroupID).All(ctx)
+		matches, e := client.APIKey.Query().Where(apikey.UserIDEQ(userID), apikey.NameIn(name, legacyName, previousName, "hwlab-gpt-"+r.ID)).Select(apikey.FieldName, apikey.FieldID, apikey.FieldKey, apikey.FieldStatus, apikey.FieldDeletedAt, apikey.FieldGroupID).All(ctx)
 		if e != nil {
 			return e
 		}
@@ -189,8 +203,37 @@ func run(path string, in io.Reader, out io.Writer) error {
 			r.KeyID, r.Key, r.KeyName = k.ID, k.Key, name
 		}
 	}
-	return json.NewEncoder(out).Encode(map[string]any{"subjectId": request.SubjectID, "gatewayUrl": cfg.GatewayURL, "routes": cfg.Routes})
+	return json.NewEncoder(out).Encode(map[string]any{"subjectId": request.SubjectID, "gatewayUrl": cfg.GatewayURL, "routes": routes})
 }
+
+var routeIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,63}$`)
+
+// validateRoutes only checks shape and uniqueness. Which routes exist is owned
+// by the runtime route table, never by an enumeration in this adapter.
+func validateRoutes(routes []route) error {
+	if len(routes) == 0 {
+		return errors.New("at least one route is required")
+	}
+	seen := map[string]bool{}
+	for _, r := range routes {
+		if !routeIDPattern.MatchString(r.ID) {
+			return errors.New("invalid route id")
+		}
+		if seen[r.ID] {
+			return errors.New("duplicate route id")
+		}
+		seen[r.ID] = true
+		if r.GroupID <= 0 {
+			return errors.New("invalid route group")
+		}
+	}
+	return nil
+}
+
+func routePlatformAllowed(platform string) bool {
+	return platform == service.PlatformOpenAI || platform == service.PlatformComposite
+}
+
 func readEnv(path string) (map[string]string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
