@@ -147,63 +147,58 @@ func run(path string, in io.Reader, out io.Writer) error {
 		}
 		defer conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock(hashtext('sub2api-hwlab-keys'),$1)", userID)
 	}
+	// A route that names a soft-deleted, disabled or platform-incompatible
+	// group retires only itself. Dropping the whole catalog would turn one
+	// stale row into a global 503 for every bound subject.
+	available := make([]route, 0, len(routes))
+	retired := make([]string, 0)
 	for i := range routes {
 		operation = "group-read"
-		r := &routes[i]
+		r := routes[i]
 		g, e := groups.GetByID(ctx, r.GroupID)
-		if e != nil {
-			return e
+		platform, status := "", ""
+		if g != nil {
+			platform, status = g.Platform, g.Status
 		}
-		// Composite groups route the requested model to a concrete provider
-		// (for example DeepSeek) without a second bridge code path.
-		if !routePlatformAllowed(g.Platform) || g.Status != service.StatusActive {
-			return errors.New("route unavailable")
+		if retire, fatal := routeRetirable(e, platform, status); retire {
+			retired = append(retired, r.ID)
+			continue
+		} else if fatal {
+			return e
 		}
 		r.RateMultiplier = g.RateMultiplier
 		if override, ok := overrides[g.ID]; ok {
 			r.RateMultiplier = override
 		}
 		r.RateMultiplier *= g.PeakMultiplierAt(time.Now())
-		if !request.Ensure {
-			continue
-		}
-		// The legacy prefix carried a provider hint. Names are now provider
-		// neutral; the rename branch below migrates existing keys in place, so
-		// old names must stay matched or a second key would be issued.
-		legacyName := "hwlab-" + r.ID
-		name := "(HWLAB自动创建)" + legacyName
-		previousName := "(HWLAB自动创建)hwlab-gpt-" + r.ID
-		// Include soft-deleted keys: revocation must not cause silent reissuance.
-		operation = "managed-key-read"
-		matches, e := client.APIKey.Query().Where(apikey.UserIDEQ(userID), apikey.NameIn(name, legacyName, previousName, "hwlab-gpt-"+r.ID)).Select(apikey.FieldName, apikey.FieldID, apikey.FieldKey, apikey.FieldStatus, apikey.FieldDeletedAt, apikey.FieldGroupID).All(ctx)
-		if e != nil {
-			return e
-		}
-		if len(matches) > 1 {
-			return errors.New("duplicate managed keys")
-		}
-		if len(matches) == 1 {
-			k := matches[0]
-			if k.DeletedAt != nil || k.Status != service.StatusActive || k.GroupID == nil || *k.GroupID != g.ID {
-				return errors.New("managed key revoked")
-			}
-			if k.Name != name {
-				operation = "managed-key-rename"
-				if _, e := svc.Update(ctx, k.ID, userID, service.UpdateAPIKeyRequest{Name: &name}); e != nil {
-					return e
-				}
-			}
-			r.KeyID, r.Key, r.KeyName = k.ID, k.Key, name
-		} else {
-			operation = "managed-key-create"
-			k, e := svc.Create(ctx, userID, service.CreateAPIKeyRequest{Name: name, GroupID: &g.ID})
+		if request.Ensure {
+			keyID, key, keyName, e := ensureRouteKey(ctx, client, svc, userID, g.ID, r.ID)
 			if e != nil {
 				return e
 			}
-			r.KeyID, r.Key, r.KeyName = k.ID, k.Key, name
+			r.KeyID, r.Key, r.KeyName = keyID, key, keyName
 		}
+		available = append(available, r)
 	}
-	return json.NewEncoder(out).Encode(map[string]any{"subjectId": request.SubjectID, "gatewayUrl": cfg.GatewayURL, "routes": routes})
+	if len(available) == 0 {
+		operation = "route-table"
+		return errors.New("no available route")
+	}
+	return json.NewEncoder(out).Encode(map[string]any{"subjectId": request.SubjectID, "gatewayUrl": cfg.GatewayURL, "routes": available, "retiredRoutes": retired})
+}
+
+// routeRetirable keeps one stale route from taking down the whole catalog. A
+// missing or soft-deleted group and a disabled or platform-incompatible group
+// retire only that route; any other lookup failure stays fatal so a transient
+// database error never silently degrades personal credentials.
+func routeRetirable(err error, platform, status string) (retire, fatal bool) {
+	if err != nil {
+		return ent.IsNotFound(err), !ent.IsNotFound(err)
+	}
+	if !routePlatformAllowed(platform) || status != service.StatusActive {
+		return true, false
+	}
+	return false, false
 }
 
 var routeIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,63}$`)
@@ -232,6 +227,45 @@ func validateRoutes(routes []route) error {
 
 func routePlatformAllowed(platform string) bool {
 	return platform == service.PlatformOpenAI || platform == service.PlatformComposite
+}
+
+// ensureRouteKey resolves the single managed key of one route. Legacy names
+// stay matched so the rename branch never issues a second key, and a revoked or
+// re-grouped key fails closed instead of being silently reissued.
+func ensureRouteKey(ctx context.Context, client *ent.Client, svc *service.APIKeyService, userID, groupID int64, routeID string) (int64, string, string, error) {
+	legacyName := "hwlab-" + routeID
+	name := "(HWLAB自动创建)" + legacyName
+	previousName := "(HWLAB自动创建)hwlab-gpt-" + routeID
+	operation = "managed-key-read"
+	matches, err := client.APIKey.Query().
+		Where(apikey.UserIDEQ(userID), apikey.NameIn(name, legacyName, previousName, "hwlab-gpt-"+routeID)).
+		Select(apikey.FieldName, apikey.FieldID, apikey.FieldKey, apikey.FieldStatus, apikey.FieldDeletedAt, apikey.FieldGroupID).
+		All(ctx)
+	if err != nil {
+		return 0, "", "", err
+	}
+	if len(matches) > 1 {
+		return 0, "", "", errors.New("duplicate managed keys")
+	}
+	if len(matches) == 1 {
+		key := matches[0]
+		if key.DeletedAt != nil || key.Status != service.StatusActive || key.GroupID == nil || *key.GroupID != groupID {
+			return 0, "", "", errors.New("managed key revoked")
+		}
+		if key.Name != name {
+			operation = "managed-key-rename"
+			if _, err := svc.Update(ctx, key.ID, userID, service.UpdateAPIKeyRequest{Name: &name}); err != nil {
+				return 0, "", "", err
+			}
+		}
+		return key.ID, key.Key, name, nil
+	}
+	operation = "managed-key-create"
+	created, err := svc.Create(ctx, userID, service.CreateAPIKeyRequest{Name: name, GroupID: &groupID})
+	if err != nil {
+		return 0, "", "", err
+	}
+	return created.ID, created.Key, name, nil
 }
 
 func readEnv(path string) (map[string]string, error) {

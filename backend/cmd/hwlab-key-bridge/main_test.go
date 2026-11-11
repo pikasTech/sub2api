@@ -1,9 +1,13 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 func TestProjectedDatabaseSourceMatchesNativeSource(t *testing.T) {
@@ -36,5 +40,25 @@ func TestProjectedDatabaseSourceMatchesNativeSource(t *testing.T) {
 	}
 	if _, err := readEnv(dir); err == nil {
 		t.Fatal("missing projected secret must fail")
+	}
+}
+
+func TestStaleRouteRetiresOnlyItself(t *testing.T) {
+	notFound := &ent.NotFoundError{}
+	retire, fatal := routeRetirable(notFound, "", "")
+	if !retire || fatal {
+		t.Fatalf("soft-deleted group must retire only its route: retire=%v fatal=%v", retire, fatal)
+	}
+	if retire, fatal := routeRetirable(errors.New("db down"), "", ""); retire || !fatal {
+		t.Fatalf("transient lookup failure must stay fatal: retire=%v fatal=%v", retire, fatal)
+	}
+	if retire, fatal := routeRetirable(nil, service.PlatformComposite, service.StatusActive); retire || fatal {
+		t.Fatalf("active composite group must stay available: retire=%v fatal=%v", retire, fatal)
+	}
+	if retire, fatal := routeRetirable(nil, service.PlatformOpenAI, service.StatusDisabled); !retire || fatal {
+		t.Fatalf("disabled group must retire only its route: retire=%v fatal=%v", retire, fatal)
+	}
+	if retire, fatal := routeRetirable(nil, "anthropic", service.StatusActive); !retire || fatal {
+		t.Fatalf("platform-incompatible group must retire only its route: retire=%v fatal=%v", retire, fatal)
 	}
 }
