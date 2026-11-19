@@ -431,6 +431,9 @@ func TestNotificationEmailSendDeduplicatesSubscriptionExpiryReminder(t *testing.
 
 	emailSvc := NewEmailService(repo, nil)
 	svc := NewNotificationEmailService(repo, emailSvc)
+	svc.domainResolver = &notificationEmailFakeDomainResolver{
+		mx: map[string][]*net.MX{"example.com": {{Host: "mx.example.com.", Pref: 10}}},
+	}
 	input := NotificationEmailSendInput{
 		Event:          NotificationEmailEventSubscriptionExpiryReminder,
 		RecipientEmail: "User@Example.com",
@@ -701,4 +704,104 @@ func (s *notificationEmailTestSMTPServer) handleConn(conn net.Conn) {
 			}
 		}
 	}
+}
+
+type notificationEmailFakeDomainResolver struct {
+	mx      map[string][]*net.MX
+	hosts   map[string][]string
+	mxErr   map[string]error
+	hostErr map[string]error
+}
+
+func (r *notificationEmailFakeDomainResolver) LookupMX(_ context.Context, name string) ([]*net.MX, error) {
+	if err, ok := r.mxErr[name]; ok {
+		return nil, err
+	}
+	return r.mx[name], nil
+}
+
+func (r *notificationEmailFakeDomainResolver) LookupHost(_ context.Context, name string) ([]string, error) {
+	if err, ok := r.hostErr[name]; ok {
+		return nil, err
+	}
+	return r.hosts[name], nil
+}
+
+func notificationEmailRechargeSendInput(recipient string) NotificationEmailSendInput {
+	return NotificationEmailSendInput{
+		Event:          NotificationEmailEventBalanceRechargeSuccess,
+		RecipientEmail: recipient,
+		RecipientName:  "Customer",
+		UserID:         95,
+		SourceType:     "order",
+		SourceID:       "426",
+		Variables: map[string]string{
+			"site_name":       "Sub2API",
+			"recharge_amount": "40.00",
+			"current_balance": "55.06",
+			"order_id":        "426",
+		},
+	}
+}
+
+func TestNotificationEmailSendSuppressesUnroutableDomain(t *testing.T) {
+	ctx := context.Background()
+	repo := newNotificationEmailMemorySettingRepo()
+	smtpServer := startNotificationEmailTestSMTPServer(t)
+	require.NoError(t, repo.SetMultiple(ctx, smtpServer.settings()))
+	svc := NewNotificationEmailService(repo, NewEmailService(repo, nil))
+	notFound := &net.DNSError{Err: "no such host", Name: "test.com", IsNotFound: true}
+	svc.domainResolver = &notificationEmailFakeDomainResolver{
+		mxErr:   map[string]error{"test.com": notFound},
+		hostErr: map[string]error{"test.com": notFound},
+	}
+
+	require.NoError(t, svc.Send(ctx, notificationEmailRechargeSendInput("yukelab@test.com")))
+	require.Equal(t, int64(0), smtpServer.messageCount())
+}
+
+func TestNotificationEmailSendDeliversWhenDomainHasMX(t *testing.T) {
+	ctx := context.Background()
+	repo := newNotificationEmailMemorySettingRepo()
+	smtpServer := startNotificationEmailTestSMTPServer(t)
+	require.NoError(t, repo.SetMultiple(ctx, smtpServer.settings()))
+	svc := NewNotificationEmailService(repo, NewEmailService(repo, nil))
+	svc.domainResolver = &notificationEmailFakeDomainResolver{
+		mx: map[string][]*net.MX{"example.com": {{Host: "mx.example.com.", Pref: 10}}},
+	}
+
+	require.NoError(t, svc.Send(ctx, notificationEmailRechargeSendInput("customer@example.com")))
+	require.Equal(t, int64(1), smtpServer.messageCount())
+}
+
+func TestNotificationEmailSendFailsOpenOnTransientDNSFailure(t *testing.T) {
+	ctx := context.Background()
+	repo := newNotificationEmailMemorySettingRepo()
+	smtpServer := startNotificationEmailTestSMTPServer(t)
+	require.NoError(t, repo.SetMultiple(ctx, smtpServer.settings()))
+	svc := NewNotificationEmailService(repo, NewEmailService(repo, nil))
+	timeout := &net.DNSError{Err: "i/o timeout", Name: "example.com", IsTimeout: true, IsTemporary: true}
+	svc.domainResolver = &notificationEmailFakeDomainResolver{
+		mxErr:   map[string]error{"example.com": timeout},
+		hostErr: map[string]error{"example.com": timeout},
+	}
+
+	require.NoError(t, svc.Send(ctx, notificationEmailRechargeSendInput("customer@example.com")))
+	require.Equal(t, int64(1), smtpServer.messageCount())
+}
+
+func TestNotificationEmailSendUsesImplicitMXFallback(t *testing.T) {
+	ctx := context.Background()
+	repo := newNotificationEmailMemorySettingRepo()
+	smtpServer := startNotificationEmailTestSMTPServer(t)
+	require.NoError(t, repo.SetMultiple(ctx, smtpServer.settings()))
+	svc := NewNotificationEmailService(repo, NewEmailService(repo, nil))
+	notFound := &net.DNSError{Err: "no such host", Name: "example.com", IsNotFound: true}
+	svc.domainResolver = &notificationEmailFakeDomainResolver{
+		mxErr: map[string]error{"example.com": notFound},
+		hosts: map[string][]string{"example.com": {"93.184.216.34"}},
+	}
+
+	require.NoError(t, svc.Send(ctx, notificationEmailRechargeSendInput("customer@example.com")))
+	require.Equal(t, int64(1), smtpServer.messageCount())
 }
