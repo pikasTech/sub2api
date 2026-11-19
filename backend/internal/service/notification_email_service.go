@@ -12,10 +12,12 @@ import (
 	"fmt"
 	"html"
 	"log/slog"
+	"net"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -45,6 +47,15 @@ const (
 	notificationEmailMaxSubjectLength     = 200
 	notificationEmailMaxHTMLLength        = 30000
 	notificationEmailUnsubscribeTTL       = 365 * 24 * time.Hour
+
+	notificationEmailDomainStatusDeliverable = "deliverable"
+	notificationEmailDomainStatusUnroutable  = "unroutable"
+	notificationEmailDomainStatusUnknown     = "unknown"
+
+	notificationEmailDomainDeliverableTTL = 6 * time.Hour
+	notificationEmailDomainUnroutableTTL  = time.Hour
+	notificationEmailDomainUnknownTTL     = 5 * time.Minute
+	notificationEmailDomainLookupTimeout  = 3 * time.Second
 )
 
 var (
@@ -81,6 +92,23 @@ var (
 type NotificationEmailService struct {
 	settingRepo  SettingRepository
 	emailService *EmailService
+
+	domainResolver notificationEmailDomainResolver
+	domainCacheMu  sync.Mutex
+	domainCache    map[string]notificationEmailDomainCacheEntry
+}
+
+// notificationEmailDomainResolver is the subset of *net.Resolver used to check
+// whether a recipient domain can receive mail. It is an interface so tests can
+// inject deterministic MX/host answers.
+type notificationEmailDomainResolver interface {
+	LookupMX(ctx context.Context, name string) ([]*net.MX, error)
+	LookupHost(ctx context.Context, host string) ([]string, error)
+}
+
+type notificationEmailDomainCacheEntry struct {
+	status    string
+	expiresAt time.Time
 }
 
 type NotificationEmailEventInfo struct {
@@ -188,7 +216,12 @@ type notificationEmailUnsubscribeClaims struct {
 }
 
 func NewNotificationEmailService(settingRepo SettingRepository, emailService *EmailService) *NotificationEmailService {
-	svc := &NotificationEmailService{settingRepo: settingRepo, emailService: emailService}
+	svc := &NotificationEmailService{
+		settingRepo:    settingRepo,
+		emailService:   emailService,
+		domainResolver: net.DefaultResolver,
+		domainCache:    make(map[string]notificationEmailDomainCacheEntry),
+	}
 	if emailService != nil {
 		emailService.SetNotificationEmailService(svc)
 	}
@@ -417,6 +450,10 @@ func (s *NotificationEmailService) Send(ctx context.Context, input NotificationE
 		}
 	}
 
+	if s.suppressUnroutableRecipient(ctx, normalizedEvent, recipient) {
+		return nil
+	}
+
 	if s.emailService == nil {
 		return notificationEmailConfigErr(errors.New("email service is not configured"))
 	}
@@ -429,6 +466,112 @@ func (s *NotificationEmailService) Send(ctx context.Context, input NotificationE
 		}
 	}
 	return nil
+}
+
+// suppressUnroutableRecipient returns true only when the recipient domain is
+// definitively unable to receive mail. Transient DNS failures fail open so a
+// resolver hiccup never silently drops a real customer's notification.
+func (s *NotificationEmailService) suppressUnroutableRecipient(ctx context.Context, event, recipient string) bool {
+	domain := notificationEmailRecipientDomain(recipient)
+	if domain == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, notificationEmailDomainLookupTimeout)
+	defer cancel()
+	if s.mailDomainStatus(ctx, domain) != notificationEmailDomainStatusUnroutable {
+		return false
+	}
+	slog.Warn("notification email suppressed: recipient domain is not routable",
+		"event", event,
+		"recipient_hash", notificationEmailHash(recipient),
+		"recipient_domain", domain,
+		"category", "unroutable-domain",
+		"action", "suppressed",
+	)
+	return true
+}
+
+func (s *NotificationEmailService) mailDomainStatus(ctx context.Context, domain string) string {
+	now := time.Now()
+	s.domainCacheMu.Lock()
+	if entry, ok := s.domainCache[domain]; ok && now.Before(entry.expiresAt) {
+		s.domainCacheMu.Unlock()
+		return entry.status
+	}
+	s.domainCacheMu.Unlock()
+
+	status := s.lookupMailDomainStatus(ctx, domain)
+	ttl := notificationEmailDomainUnknownTTL
+	switch status {
+	case notificationEmailDomainStatusDeliverable:
+		ttl = notificationEmailDomainDeliverableTTL
+	case notificationEmailDomainStatusUnroutable:
+		ttl = notificationEmailDomainUnroutableTTL
+	}
+	s.domainCacheMu.Lock()
+	if s.domainCache == nil {
+		s.domainCache = make(map[string]notificationEmailDomainCacheEntry)
+	}
+	s.domainCache[domain] = notificationEmailDomainCacheEntry{status: status, expiresAt: now.Add(ttl)}
+	s.domainCacheMu.Unlock()
+	return status
+}
+
+func (s *NotificationEmailService) lookupMailDomainStatus(ctx context.Context, domain string) string {
+	resolver := s.domainResolver
+	if resolver == nil {
+		return notificationEmailDomainStatusUnknown
+	}
+	mxRecords, mxErr := resolver.LookupMX(ctx, domain)
+	if mxErr != nil && !notificationEmailDNSErrorNotFound(mxErr) {
+		return notificationEmailDomainStatusUnknown
+	}
+	hasMXHost := false
+	for _, record := range mxRecords {
+		if record == nil {
+			continue
+		}
+		if record.Host == "." {
+			// RFC 7505 null MX: the domain explicitly accepts no mail.
+			return notificationEmailDomainStatusUnroutable
+		}
+		if strings.TrimSpace(record.Host) != "" {
+			hasMXHost = true
+		}
+	}
+	if hasMXHost {
+		return notificationEmailDomainStatusDeliverable
+	}
+
+	// RFC 5321 implicit MX fallback: no MX records means the A/AAAA record of the
+	// domain itself is the mail exchanger.
+	hosts, hostErr := resolver.LookupHost(ctx, domain)
+	if hostErr != nil {
+		if notificationEmailDNSErrorNotFound(hostErr) {
+			return notificationEmailDomainStatusUnroutable
+		}
+		return notificationEmailDomainStatusUnknown
+	}
+	if len(hosts) > 0 {
+		return notificationEmailDomainStatusDeliverable
+	}
+	return notificationEmailDomainStatusUnroutable
+}
+
+func notificationEmailRecipientDomain(recipient string) string {
+	at := strings.LastIndex(recipient, "@")
+	if at < 0 || at == len(recipient)-1 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(recipient[at+1:]))
+}
+
+func notificationEmailDNSErrorNotFound(err error) bool {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return dnsErr.IsNotFound
+	}
+	return false
 }
 
 func (s *NotificationEmailService) RememberRecipientLocale(ctx context.Context, userID int64, email, acceptLanguage string) {
